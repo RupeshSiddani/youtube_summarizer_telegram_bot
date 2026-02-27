@@ -1,0 +1,4 @@
+python-telegram-bot==22.6
+youtube-transcript-api==1.2.4
+groq
+python-dotenv==1.0.1
