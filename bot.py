@@ -26,6 +26,7 @@ from handlers.command_handler import (
 )
 from handlers.link_handler import handle_link
 from handlers.qa_handler import handle_question
+from services import session as sess
 
 # ── Logging ───────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -69,8 +70,14 @@ async def error_handler(update: object, context) -> None:
         except Exception:
             pass  # Don't crash if we can't send
 
+# ── Periodic cleanup job ─────────────────────────────────────────────────
+async def cleanup_job(context) -> None:
+    """Runs every 30 minutes: removes expired sessions from memory."""
+    removed = sess.cleanup_expired()
+    active = sess.active_session_count()
+    if removed > 0:
+        logger.info(f"Session cleanup: removed {removed} expired sessions, {active} active")
 
-# ── Build & start bot ─────────────────────────────────────────────────────
 def main() -> None:
     # Use larger timeouts to handle slow connections / Gemini processing time
     request = HTTPXRequest(
@@ -86,6 +93,9 @@ def main() -> None:
         .request(request)
         .build()
     )
+
+    # Schedule periodic session cleanup every 30 minutes
+    app.job_queue.run_repeating(cleanup_job, interval=1800, first=1800)
 
     # Slash commands
     app.add_handler(CommandHandler("start", cmd_start))
