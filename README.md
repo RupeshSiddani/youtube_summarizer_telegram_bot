@@ -1,121 +1,90 @@
-# Telegram YouTube Summarizer & Q&A Bot
+# YouTube Summarizer Telegram Bot
 
-A Telegram bot that accepts YouTube links, fetches transcripts, generates structured summaries, and answers follow-up questions — powered by OpenClaw (local LLM). Supports English and multiple Indian languages.
-
----
+A smart AI research assistant for YouTube, built as a Telegram bot. Summarizes long videos, answers contextual questions, and supports multiple Indian languages.
 
 ## Features
 
-- **YouTube Summarization** — Structured summary with key points, timestamps, and core takeaway
-- **Q&A on Video** — Ask questions grounded strictly in the video transcript (no hallucinations)
-- **Multi-language** — English + Hindi, Tamil, Telugu, Kannada, Marathi
-- **Long video support** — Automatic transcript chunking for hour-long videos
-- **Slash commands** — `/summary`, `/deepdive`, `/actionpoints`, `/reset`
-- **Multi-user** — Isolated sessions per Telegram chat
-
----
+- **Video Summarization** — Structured summary with key points, timestamps, and core insight
+- **Q&A Chat** — Ask unlimited follow-up questions grounded strictly in the transcript
+- **Multi-language** — English, Hindi, Telugu, Tamil, Kannada, Marathi
+- **Commands** — `/summary`, `/deepdive`, `/actionpoints`, `/reset`
 
 ## Setup
 
-### 1. Prerequisites
-
-- Python 3.10+
-- OpenClaw running locally
-- A Telegram bot token from [@BotFather](https://t.me/BotFather)
-
-### 2. Install dependencies
-
 ```bash
+# 1. Install dependencies
 pip install -r requirements.txt
-```
 
-### 3. Configure `.env`
+# 2. Configure environment
+cp .env.example .env
+# Edit .env with your Telegram token and Groq API key
 
-```env
-TELEGRAM_TOKEN=your_telegram_bot_token
-OPENCLAW_API_BASE=http://localhost:11434/v1
-OPENCLAW_API_KEY=openclaw
-OPENCLAW_MODEL=llama3
-```
-
-### 4. Run
-
-```bash
+# 3. Run the bot
 python bot.py
 ```
 
----
-
-## Usage
-
-| Action | How |
+### Required API Keys
+| Key | Where to get |
 |---|---|
-| Summarize a video | Send a YouTube link |
-| Ask a question | Type any question after loading a video |
-| Switch language | Say `Summarize in Hindi` |
-| Re-read summary | `/summary` |
-| Deep analysis | `/deepdive` |
-| Action items | `/actionpoints` |
-| Start fresh | `/reset` |
+| `TELEGRAM_TOKEN` | [@BotFather](https://t.me/botfather) on Telegram |
+| `GROQ_API_KEY` | [console.groq.com](https://console.groq.com) (free) |
 
----
+## Architecture
 
-## Architecture Decisions
+### Tech Stack
+- **Python 3.13** + `python-telegram-bot 22.6`
+- **LLM**: Groq API (`llama-3.3-70b-versatile`) — 14,400 free requests/day
+- **Transcript**: `youtube-transcript-api 1.2.4`
 
-### Transcript Retrieval
-Used `youtube-transcript-api` — no auth required, supports manual and auto-generated captions. Falls back gracefully across transcript types. Long transcripts are chunked at ~3000 words to stay within LLM context limits.
+### Architectural Decisions
 
-### LLM Integration
-Uses the `openai` Python client pointed at the local OpenClaw endpoint (`OPENCLAW_API_BASE`). This is compatible with any OpenAI-API-compatible local server (Ollama, LM Studio, OpenClaw).
+#### 1. Transcript Storage — In-Memory with Global Cache
+Transcripts are stored in a global `TranscriptCache` (not per-user) so if multiple users request the same video, it is fetched only once.
 
-### Context & Multi-user
-Each Telegram `chat_id` gets an isolated in-memory `UserSession` dataclass storing: transcript, summary, language preference, and Q&A history. No database needed. Sessions are cleared on `/reset` or when a new video is sent.
+- **TTL**: 24 hours (transcripts are stable; YouTube auto-captions don't change frequently)
+- **Capacity**: Up to 200 videos with LRU eviction
+- **Benefit**: Eliminates redundant YouTube API calls; second user gets instant response
 
-### Multi-language
-Language support is prompt-engineered — the system prompt instructs the LLM to respond in the target language. No external translation API is needed. User can request a language by name at any time (`Summarize in Hindi`, `Explain in Tamil`, etc.).
+#### 2. Session Management — Per-User with TTL
+Each user (Telegram `chat_id`) has an isolated session stored in memory.
 
-### Q&A Grounding
-The transcript is passed as context in the system prompt. The LLM is explicitly instructed to only use transcript content and to respond with `"This topic is not covered in the video."` when information is absent. The last 6 conversation turns are included for follow-up context.
+- **TTL**: 2 hours of inactivity → session auto-expires and is garbage-collected
+- **History limit**: 20 messages (10 exchanges) — keeps token cost bounded
+- **Cleanup**: Periodic job runs every 30 minutes to evict expired sessions
+- **Isolation**: Users never share session state — suitable for simultaneous multi-user usage
 
-### Error Handling
-All failure modes are caught and returned as user-friendly Telegram messages:
-- Invalid YouTube URL
-- Transcripts disabled
-- No captions available
-- Video unavailable
-- LLM errors
+#### 3. Context Handling — Full Transcript to LLM
+Instead of chunking the transcript (which loses context), we send the full text to the LLM in a single call.
 
----
+- **Why**: `llama-3.3-70b-versatile` supports large context windows; transcript of even a 2-hour video fits comfortably
+- **For Q&A**: First 4,000 words of transcript + last 8 conversation messages are included
+- **No hallucinations**: System prompt explicitly instructs the model to refuse questions not in the transcript
 
-## File Structure
+#### 4. Translation — Reuse Cached Summary
+When user requests a language change, the existing English summary is translated (not re-generated from transcript).
+
+- **Benefit**: Translation is a single LLM call (~1-2s) vs. full summarization from transcript
+
+#### 5. Cost Optimization (Token Efficiency)
+- Q&A uses only the first ~4,000 words of transcript (not full) — sufficient for question answering
+- Conversation history capped at 20 messages to prevent unbounded token growth
+- Cached summaries avoid redundant LLM calls for same video
+
+## Project Structure
 
 ```
 chat_bot/
-├── .env
-├── requirements.txt
-├── README.md
-├── bot.py                      # Entry point
+├── bot.py                    # Entry point, handler registration, cleanup job
 ├── handlers/
-│   ├── link_handler.py         # YouTube URL → summary
-│   ├── qa_handler.py           # Questions & language switching
-│   └── command_handler.py      # /start /summary /deepdive etc.
+│   ├── command_handler.py    # /start /help /summary /deepdive /actionpoints /reset
+│   ├── link_handler.py       # YouTube URL processing with cache check
+│   └── qa_handler.py         # Q&A and language switching
 ├── services/
-│   ├── transcript.py           # Transcript fetch + chunking
-│   ├── llm.py                  # OpenClaw LLM calls
-│   └── session.py              # Per-user session store
+│   ├── cache.py              # Global transcript cache (LRU + TTL)
+│   ├── session.py            # Per-user session management (TTL + history limit)
+│   ├── llm.py                # Groq LLM integration
+│   └── transcript.py         # YouTube transcript fetching
 └── utils/
-    └── url_parser.py           # YouTube URL → video ID
+    ├── url_parser.py         # YouTube URL/ID extraction
+    └── telegram_helpers.py   # Long message splitting (4096 char Telegram limit)
 ```
-
----
-
-## Evaluation Coverage
-
-| Criterion | Implementation |
-|---|---|
-| End-to-end (30%) | URL → transcript → summary → Q&A full flow |
-| Summary quality (20%) | Structured prompt: key points, timestamps, takeaway |
-| Q&A accuracy (20%) | Grounded in transcript, conversation history kept |
-| Multi-language (15%) | 5 Indian languages via prompt engineering |
-| Code quality (10%) | Modular services/handlers/utils separation |
-| Error handling (5%) | All edge cases handled with user-friendly messages |
