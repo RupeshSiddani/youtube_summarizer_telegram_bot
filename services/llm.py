@@ -93,29 +93,33 @@ def detect_language_request(message: str) -> str | None:
 
 def summarize(transcript: str, language: str = "English") -> str:
     """Summarize a full video transcript in the given language."""
-    system = f"""You are a professional YouTube video analyst. 
-Produce a structured summary in {language}.
+    system = f"""You are an expert video analyst and researcher. 
+Produce a highly detailed, comprehensive, and structured summary in {language}.
 Output ONLY the summary — no preamble, no explanation.
-Fill every section with specific real content from the transcript.
+Extract as much valuable information, nuance, and context from the transcript as possible.
 
 Use this exact format:
-🎦 *Video Title*
+🎦 *Video Title & Overview*
 [Inferred title — be specific]
+[A solid 3-4 sentence paragraph summarizing the entire video's premise, background context, and ultimate goal.]
 
-📌 *Key Points*
-1. [Specific point with detail]
-2. [Specific point with detail]
-3. [Specific point with detail]
-4. [Specific point with detail]
-5. [Specific point with detail]
+📌 *Detailed Key Points & Arguments*
+[Provide 7 to 10 highly detailed bullet points. Do not just list topics; explain the 'how' and 'why' for each point. Include statistics, examples, or specific anecdotes mentioned in the video.]
+• [Detailed Point 1]
+• [Detailed Point 2]
+• [Detailed Point 3]
+...
 
-⏱ *Important Timestamps*
-• ~Start — [What is discussed at beginning]
-• ~Middle — [What is discussed in middle]
-• ~End — [What is discussed near end]
+🚀 *Actionable Insights & Takeaways*
+[If applicable, list 3-5 things the viewer can actually learn, do, or apply based on the video.]
 
-🧠 *Core Takeaway*
-[2-3 sentences with the most important insight from this video]"""
+⏱ *Chronological Flow*
+• ~Beginning — [What was discussed in the first part]
+• ~Middle — [The core discussion/climax]
+• ~End — [Conclusions and final thoughts]
+
+🧠 *Final Conclusion*
+[2-3 sentences wrapping up the most important overarching theme of this video.]"""
 
     # Groq's llama3-70b supports up to 8192 tokens — limit transcript to ~6000 tokens (~4500 words)
     transcript_snippet = " ".join(transcript.split()[:4500])
