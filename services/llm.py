@@ -24,6 +24,9 @@ load_dotenv()
 _client = Groq(api_key=os.getenv("GROQ_API_KEY", ""))
 _MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
 
+# Fallback model if primary exceeds rate limit (100k Tokens Per Day)
+_FALLBACK_MODEL = "llama-3.1-8b-instant"
+
 SUPPORTED_LANGUAGES = {
     "hindi": "Hindi", "हिंदी": "Hindi",
     "tamil": "Tamil", "தமிழ்": "Tamil",
@@ -37,26 +40,42 @@ SUPPORTED_LANGUAGES = {
 # ─── Core LLM call ────────────────────────────────────────────────────────────
 
 def _ask(system: str, user: str) -> str:
-    """Call Groq with retry on rate limit."""
-    for attempt in range(3):
-        try:
-            response = _client.chat.completions.create(
-                model=_MODEL,
-                messages=[
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user},
-                ],
-                temperature=0.3,
-                max_tokens=2048,
-            )
-            return response.choices[0].message.content.strip()
-        except Exception as e:
-            if "429" in str(e) or "rate_limit" in str(e).lower():
-                if attempt < 2:
-                    time.sleep(15)
-                    continue
-            raise
-    raise RuntimeError("Rate limited. Please wait a moment and try again.")
+    """Call Groq with retry on rate limit and fallback to smaller model if TPD exceeded."""
+    models_to_try = [_MODEL, _FALLBACK_MODEL]
+
+    for model in models_to_try:
+        for attempt in range(3):
+            try:
+                response = _client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": user},
+                    ],
+                    temperature=0.3,
+                    max_tokens=2048,
+                )
+                return response.choices[0].message.content.strip()
+            except Exception as e:
+                err_str = str(e).lower()
+                # If Tokens Per Day (TPD) is exhausted, break to try the next model
+                if "tpd" in err_str or "tokens per day" in err_str:
+                    print(f"⚠️ Rate limit (TPD) reached for {model}, falling back to next model...")
+                    break 
+                
+                # For per-minute limits (RPM/RPD/TPM), wait and retry
+                if "429" in err_str or "rate limit" in err_str:
+                    if attempt < 2:
+                        time.sleep(15)
+                        continue
+                
+                # If neither, or we exhausted retries without hitting TPD, raise
+                if attempt == 2:
+                    raise
+
+    raise RuntimeError("All Groq models are rate limited. Please wait a while and try again.")
+
+
 
 
 # ─── Language detection ───────────────────────────────────────────────────────
@@ -133,7 +152,7 @@ def answer_question(
 
     system = f"""You are a helpful video assistant. Answer questions based ONLY on the transcript.
 If the answer is not in the transcript, say: "❓ This topic is not covered in the video."
-Do NOT make up information. Be conversational and concise. Respond in {language}."""
+Do NOT make up information. Be conversational, concise, and FORMAT YOUR ANSWER NEATLY USING BULLET POINTS OR NUMBERED LISTS where appropriate. Respond in {language}."""
 
     user_msg = f"""Transcript:
 {transcript_snippet}
