@@ -14,7 +14,18 @@ A Telegram bot that acts as an AI research assistant for YouTube videos. Send it
 - Per-user session isolation with automatic expiry
 
 ---
+## Screenshots
 
+**1. Video Summarization & Timestamps**
+![Summary](assets/summary.png)
+
+**2. Contextual Q&A**
+![Q&A](assets/qa.png)
+
+**3. Multi-Language Support**
+![Language](assets/language.png)
+
+---
 ## Requirements
 
 - Python 3.13 or higher
